@@ -1254,9 +1254,15 @@ def terminal_tool(
     children (kept in a separate env cache from the configured backend).
     """
     try:
+        from agent.workload_boundary import execution_provider, require_unmanaged_allowed
+        execution_provider("terminal")
         plan = _plan_execution(
             command, task_id=task_id, timeout=timeout, background=background, _host_local=_host_local,
         )
+        if plan.env_type != "local":
+            require_unmanaged_allowed("remote terminal")
+        if pty:
+            execution_provider("terminal-pty")
         env = _acquire_env(plan, task_id)
         env_type, cwd, effective_task_id = plan.env_type, plan.cwd, plan.effective_task_id
 

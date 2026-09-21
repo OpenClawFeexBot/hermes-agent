@@ -1027,6 +1027,10 @@ class PluginContext:
 # the displaced entry. Rows: (method, kind, registry module, base-class module:attr, label, docstring,
 # options). ``normalize``: ``strip`` (default), ``lower`` (strip+lowercase) or ``None`` (raw name).
 _SCOPED_PROVIDER_REGISTRARS: Tuple[Tuple[str, str, str, str, str, str, Dict[str, Any]], ...] = (
+    ("register_workload_provider", "workload_provider", "agent.workload_registry",
+     "agent.workload_provider:WorkloadProvider", "workload provider",
+     "Register a versioned fail-closed workload provider for the current profile.",
+     {"normalize": None}),
     ("register_image_gen_provider", "image_gen_provider", "agent.image_gen_registry",
      "agent.image_gen_provider:ImageGenProvider", "image_gen provider",
      "Register an :class:`agent.image_gen_provider.ImageGenProvider`; "

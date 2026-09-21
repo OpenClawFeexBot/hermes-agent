@@ -188,6 +188,9 @@ def _terminate_process_group(proc: subprocess.Popen) -> None:
 
 def _terminate_cron_script_tree(proc: subprocess.Popen) -> None:
     """Terminate a script tree, then fall back to the local process-group path."""
+    if getattr(proc, "_hermes_managed", False) is True:
+        proc.kill()
+        return
     if proc.poll() is not None:
         # Already reaped: kill_process_tree would log a spurious "no signal" warning.
         return
@@ -334,6 +337,8 @@ def _run_job_script(
     Optional absolute path to use as the script's cwd. When set, the subprocess runs in this directory
     instead of the scripts-dir parent. See #69396.
     """
+    from agent.workload_boundary import execution_provider, popen
+    managed = execution_provider("cron-script")
     path, err = _resolve_script_path(script_path)
     if path is None:
         return False, err
@@ -374,8 +379,9 @@ def _run_job_script(
         # Use the job's workdir as the subprocess cwd when configured, otherwise default to the scripts-dir
         # parent (back-compat). NEVER mutate the Python process cwd — that would leak into concurrent
         # gateway sessions (#69396).
-        proc = subprocess.Popen(
-            argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        proc = popen(
+            "cron-script", argv, **({"stdin": subprocess.DEVNULL} if managed else {}),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             cwd=workdir or str(path.parent), env=env, **popen_kwargs)
         deadline = time.monotonic() + script_timeout
         while True:

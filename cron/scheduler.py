@@ -2455,6 +2455,15 @@ def run_job(
     ``extra_prompt``: optional per-run context from ``cronjob(action='run', prompt=...)`` (#57331). Appended
     to the stored prompt for this fire only — never persisted to the job definition.
     """
+    from agent.workload_boundary import require_unmanaged_allowed, execution_provider
+    from agent.workload_provider import WorkloadUnavailable
+    try:
+        if job.get("no_agent"):
+            execution_provider("cron-script")
+        else:
+            require_unmanaged_allowed("cron agent")
+    except WorkloadUnavailable as exc:
+        return False, "", "", str(exc)
     job_id = job["id"]
     job_name = str(job.get("name") or job.get("prompt") or job_id or "cron job")
 

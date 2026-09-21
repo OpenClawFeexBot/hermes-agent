@@ -1185,6 +1185,23 @@ class ProcessRegistry(ProcessCheckpointMixin):
         """Spawn a background process locally (TERMINAL_ENV=local; other backends use
         spawn_via_env()). ``use_pty`` requests a pseudo-terminal via ptyprocess/pywinpty
         for interactive CLIs, falling back to a plain pipe when unavailable or failing."""
+        from agent.workload_boundary import execution_provider, popen
+        managed = execution_provider("terminal")
+        if use_pty and managed:
+            execution_provider("terminal-pty")
+            from agent.workload_boundary import workload_config
+            session = self._new_session(command, task_id, owner_task_id, session_key, _resolve_safe_cwd(cwd or os.getcwd()))
+            session._pty = managed.popen("terminal-pty", [_find_shell(), "-lic", f"set +m; {command}"],
+                                         config=workload_config(), cwd=session.cwd, env=self._spawn_env(env_vars))
+            session.pid = session._pty.pid
+            session.host_start_time = self._safe_host_start_time(session.pid)
+            try:
+                self._track_started(session, self._pty_reader_loop, f"proc-pty-reader-{session.id}")
+            except BaseException:
+                session._pty.terminate(force=True)
+                session._pty.close()
+                raise
+            return session
         # Bash parses ``A && B &`` as ``(A && B) &`` — a subshell that holds our stdout
         # pipe open forever when B is a long-running server. The rewriter turns it into
         # ``A && { B & }``. Lazy import: terminal_tool imports this module.
@@ -1212,7 +1229,8 @@ class ProcessRegistry(ProcessCheckpointMixin):
         # Pipe path (non-PTY or PTY fallback).
         _popen_kwargs = {"creationflags": windows_hide_flags()} if _IS_WINDOWS else {}
         unit_suffix = f"{session.id}-pipe-fallback" if pty_scope_attempted else session.id
-        spawn_argv = self._scope_argv(session, safe_command, unit_suffix, "Local")
+        spawn_argv = ([_find_shell(), "-lic", f"set +m; {safe_command}"] if managed else
+                      self._scope_argv(session, safe_command, unit_suffix, "Local"))
         spawn_env = self._spawn_env(env_vars)
         if session.systemd_unit:
             spawn_env = systemd_user_bus_env(spawn_env)
@@ -1221,8 +1239,8 @@ class ProcessRegistry(ProcessCheckpointMixin):
         # share the foreground process group and background spawns would stop the whole
         # session (observed as dead TUIs in state T). Cgroup isolation is unaffected —
         # the scope attaches to the invoked process, not the spawning session.
-        proc = subprocess.Popen(
-            spawn_argv, text=True, cwd=session.cwd, env=spawn_env, encoding="utf-8",
+        proc = popen(
+            "terminal", spawn_argv, text=True, cwd=session.cwd, env=spawn_env, encoding="utf-8",
             errors="replace", stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
             start_new_session=True, **_popen_kwargs)
         session.process = proc
@@ -1239,7 +1257,9 @@ class ProcessRegistry(ProcessCheckpointMixin):
         """Post-Popen setup failed: kill the orphaned subprocess (and any setsid
         descendants) so nothing leaks untracked."""
         with suppress(Exception):
-            if session.systemd_unit:
+            if getattr(proc, "_hermes_managed", False) is True:
+                proc.kill()
+            elif session.systemd_unit:
                 # Scope teardown is the authoritative cleanup for the worker cgroup
                 # (never killpg here); the wrapper PID is terminated as fallback.
                 _stop_systemd_unit(session.systemd_unit)
@@ -1284,6 +1304,8 @@ class ProcessRegistry(ProcessCheckpointMixin):
         The command is wrapped to capture its in-sandbox PID and redirect output to a
         log file that later execute() calls poll. No live pipe or stdin, but it runs in
         the correct sandbox context."""
+        from agent.workload_boundary import require_unmanaged_allowed
+        require_unmanaged_allowed("remote background execution")
         session = self._new_session(command, task_id, owner_task_id, session_key, cwd, env_ref=env, pid_scope="sandbox")
         temp_dir = self._env_temp_dir(env)
         log_path, pid_path, exit_path = (f"{temp_dir}/hermes_bg_{session.id}.{ext}" for ext in ("log", "pid", "exit"))
@@ -2142,12 +2164,16 @@ class ProcessRegistry(ProcessCheckpointMixin):
         """Deliver the kill via PTY, local Popen tree, sandbox exec or recovered host
         PID. Returns a final result dict when the kill cannot proceed (recycled/dead
         recovered PID, or no runtime handle), else None."""
-        if session._pty:
+        if session._pty and getattr(session._pty, "_hermes_managed", False) is True:
+            session._pty.terminate(force=True)
+        elif session._pty:
             try:
                 session._pty.terminate(force=True)
             except Exception:
                 if session.pid:
                     os.kill(session.pid, signal.SIGTERM)
+        elif session.process and getattr(session.process, "_hermes_managed", False) is True:
+            session.process.kill()
         elif session.process:
             # Tree kill: on Windows Popen.terminate() only kills the shell wrapper and
             # leaves Git Bash descendants behind.

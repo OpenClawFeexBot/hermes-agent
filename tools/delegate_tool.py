@@ -181,6 +181,8 @@ def _build_child_agent(
 ):
     """Build (don't run) a child AIAgent on the main thread. override_* (from delegation config) replace parent
     inheritance so children can run on a different provider:model pair."""
+    from agent.workload_boundary import require_unmanaged_allowed
+    require_unmanaged_allowed("child agent construction")
     import uuid as _uuid
     from run_agent import AIAgent
     from agent.delegation_context import delegated_child_context
@@ -456,6 +458,13 @@ def delegate_task(
         return _handle_control_action(normalized_action, subagent_id, message, parent_agent)
     if normalized_action and normalized_action != "spawn":
         return tool_error(f"Unknown action '{action}'. Use spawn (default), list, steer, or stop.")
+
+    from agent.workload_boundary import require_unmanaged_allowed
+    from agent.workload_provider import WorkloadUnavailable
+    try:
+        require_unmanaged_allowed("delegation")
+    except WorkloadUnavailable as exc:
+        return tool_error(str(exc))
 
     # Operator kill switch (TUI / delegation.pause RPC): blocks NEW spawns only.
     if is_spawn_paused():
