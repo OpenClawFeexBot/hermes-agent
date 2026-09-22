@@ -55,7 +55,8 @@ def managed_home(tmp_path, monkeypatch):
     )
     try:
         assert select.select([coordinator.stdout], [], [], 10)[0]
-        assert coordinator.stdout.readline().strip() == "ready"
+        ready = coordinator.stdout.readline().strip()
+        assert ready == "ready", coordinator.communicate(timeout=5) if not ready else ready
         yield tmp_path, state
     finally:
         coordinator.terminate()

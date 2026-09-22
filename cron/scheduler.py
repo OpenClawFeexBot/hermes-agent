@@ -2436,6 +2436,10 @@ class _FireAudit:
 
 
 
+from cron.workload_estimates import with_job_estimates
+
+
+@with_job_estimates
 def run_job(
     job: dict, *, defer_agent_teardown: Optional[list] = None, extra_prompt: Optional[str] = None,
     cancel_event: Optional[_CancelEventLike] = None, execution_id: Optional[str] = None,

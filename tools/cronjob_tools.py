@@ -609,6 +609,8 @@ def _action_create(a: Dict[str, Any]) -> str:
             script=_normalize_optional_job_value(script), context_from=context_from,
             enabled_toolsets=a["enabled_toolsets"] or None, workdir=_normalize_optional_job_value(a["workdir"]),
             no_agent=_no_agent, attach_to_session=a["attach_to_session"],
+            **{key: a[key] for key in ("estimated_peak_memory_mb", "estimated_retained_memory_mb")
+               if a.get(key) is not None},
             monitor_script=_normalize_optional_job_value(a["monitor_script"]),
             monitor_url=_normalize_optional_job_value(a["monitor_url"]),
             # CLI-only lane: absent from CRONJOB_SCHEMA and the model dispatch (models don't pick models).
@@ -813,6 +815,9 @@ def _update_context_from(job: Dict[str, Any], a: Dict[str, Any], updates: Dict[s
 
 def _update_run_fields(job: Dict[str, Any], a: Dict[str, Any], updates: Dict[str, Any]) -> Optional[str]:
     """enabled_toolsets / attach_to_session / workdir / no_agent / repeat / schedule."""
+    for key in ("estimated_peak_memory_mb", "estimated_retained_memory_mb"):
+        if a.get(key) is not None:
+            updates[key] = a[key]
     if a["enabled_toolsets"] is not None:
         updates["enabled_toolsets"] = a["enabled_toolsets"] or None
     if a["attach_to_session"] is not None:
@@ -922,7 +927,9 @@ def cronjob(
     session_id: Optional[str] = None,
     paused: bool = False,
     paused_reason: Optional[str] = None,
-    pinned: Optional[bool] = None) -> str:
+    pinned: Optional[bool] = None,
+    estimated_peak_memory_mb: Optional[int] = None,
+    estimated_retained_memory_mb: Optional[int] = None) -> str:
     """Unified cron job management tool."""
     a = dict(locals())
     del a["task_id"]  # unused but kept for handler signature compatibility
@@ -961,6 +968,8 @@ def _cronjob_schema_overrides() -> dict:
     return {"parameters": params}
 
 
+from agent.workload_estimates import memory_schema
+
 CRONJOB_SCHEMA = {
     "name": "cronjob_manage",
     "description": """Manage scheduled cron jobs: action='create' schedules a job from a prompt and/or skills; 'list' inspects jobs; 'update'/'pause'/'resume'/'remove' manage one by job_id (always list first — never guess job IDs); 'run' fires a job immediately in the BACKGROUND (returns a handle at once, outcome re-enters the conversation when done — do not wait or poll; optional 'prompt' adds transient context for that fire only).
@@ -971,6 +980,8 @@ Jobs run in a fresh session with no current-chat context, so prompts must be sel
     "parameters": {
         "type": "object",
         "properties": {
+            "estimated_peak_memory_mb": memory_schema(),
+            "estimated_retained_memory_mb": memory_schema(retained=True),
             "paused": {"type": "boolean", "description": "Create only: persist disabled atomically. Resume to schedule; explicit run remains available. Default false."},
             "paused_reason": {"type": "string", "description": "Create only: auditable reason; requires paused=true."},
             "action": {
@@ -1078,7 +1089,7 @@ def check_cronjob_requirements() -> bool:
 _HANDLER_FORWARDED_ARGS = (
     "job_id", "prompt", "schedule", "name", "repeat", "deliver", "failure_deliver", "skill", "skills", "reason",
     "script", "context_from", "continuity", "enabled_toolsets", "workdir", "no_agent", "attach_to_session",
-    "paused_reason", "pinned")
+    "paused_reason", "pinned", "estimated_peak_memory_mb", "estimated_retained_memory_mb")
 
 
 def _cronjob_handler(args, **kw):

@@ -446,6 +446,10 @@ def _start_heartbeat_thread(loop_fn, name: str, fail_log) -> Optional[threading.
     return thread
 
 
+from cron.workload_estimates import with_job_script_estimates
+
+
+@with_job_script_estimates
 def _run_job_script_with_claim_heartbeat(
     job: dict, script_path: str, workdir: Optional[str] = None,
     cancel_event: Optional[_CancelEventLike] = None,

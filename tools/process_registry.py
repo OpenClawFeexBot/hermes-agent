@@ -1189,10 +1189,9 @@ class ProcessRegistry(ProcessCheckpointMixin):
         managed = execution_provider("terminal")
         if use_pty and managed:
             execution_provider("terminal-pty")
-            from agent.workload_boundary import workload_config
             session = self._new_session(command, task_id, owner_task_id, session_key, _resolve_safe_cwd(cwd or os.getcwd()))
-            session._pty = managed.popen("terminal-pty", [_find_shell(), "-lic", f"set +m; {command}"],
-                                         config=workload_config(), cwd=session.cwd, env=self._spawn_env(env_vars))
+            session._pty = popen("terminal-pty", [_find_shell(), "-lic", f"set +m; {command}"],
+                                 cwd=session.cwd, env=self._spawn_env(env_vars))
             session.pid = session._pty.pid
             session.host_start_time = self._safe_host_start_time(session.pid)
             try:

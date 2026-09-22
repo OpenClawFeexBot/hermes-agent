@@ -671,7 +671,9 @@ _JOB_ARG_FIELDS = (("name", "name"), ("deliver", "deliver"), ("failure_deliver",
                    ("repeat", "repeat"), ("script", "script"), ("workdir", "workdir"),
                    ("model", "model"), ("provider", "model_provider"), ("pinned", "pinned"),
                    ("monitor_script", "monitor_script"), ("monitor_url", "monitor_url"),
-                   ("continuity", "continuity"), ("reasoning_effort", "reasoning_effort"))
+                   ("continuity", "continuity"), ("reasoning_effort", "reasoning_effort"),
+                   ("estimated_peak_memory_mb", "estimated_peak_memory_mb"),
+                   ("estimated_retained_memory_mb", "estimated_retained_memory_mb"))
 
 
 def _job_api_kwargs(args) -> Dict[str, Any]:
@@ -685,7 +687,9 @@ _JOB_DETAIL_LINES = (
     ("monitor_url", "  Monitor: {} (agent runs only on output change)"),
     ("no_agent", "  Mode: no-agent (script stdout delivered directly)"),
     ("continuity", "  Continuity: on (each run sees the previous run's output)"),
-    ("workdir", "  Workdir: {}"))
+    ("workdir", "  Workdir: {}"),
+    ("estimated_peak_memory_mb", "  Estimated tree peak: {} MiB"),
+    ("estimated_retained_memory_mb", "  Estimated retained parent: {} MiB"))
 
 
 def _print_job_details(job_data: Dict[str, Any]) -> None:

@@ -145,6 +145,13 @@ def build_cron_parser(subparsers, *, cmd_cron: Callable) -> None:
             "medium, high, xhigh, max, or ultra. Pass empty string to clear "
             "the pin and follow config resolution.")
 
+    from agent.workload_estimates import memory_schema
+    for job_parser in (cron_create, cron_edit):
+        job_parser.add_argument("--estimated-peak-memory-mb", type=int,
+                                help=memory_schema()["description"])
+        job_parser.add_argument("--estimated-retained-memory-mb", type=int,
+                                help=memory_schema(retained=True)["description"])
+
     # lifecycle actions
     cron_pause = cron_subparsers.add_parser("pause", help="Pause a scheduled job")
     cron_pause.add_argument("job_id", help="Job ID to pause")

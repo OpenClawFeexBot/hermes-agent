@@ -71,6 +71,7 @@ def popen(kind, args, *, cancel_event=None, **kwargs):
         import inspect
         if cancel_event is not None and "cancel_event" in inspect.signature(provider.popen).parameters:
             kwargs["cancel_event"] = cancel_event
-        return provider.popen(kind, args, config=config, **kwargs)
+        from agent.workload_estimates import current_estimate
+        return provider.popen(kind, args, config=config, **current_estimate(kind), **kwargs)
     except Exception as exc:
         raise WorkloadUnavailable("workload execution-owner launch failed") from exc
