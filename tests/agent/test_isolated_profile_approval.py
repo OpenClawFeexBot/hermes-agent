@@ -71,7 +71,7 @@ def test_commissioned_approval_parity(queue_home, local_model, monkeypatch, kind
         assert tools, result
         assert marker.exists() == (choice == 'once'), tools
         if choice == 'deny':
-            assert any('denied' in m['content'].lower() for m in tools), tools
+            assert any(json.loads(m['content']).get('status') == 'blocked' for m in tools), tools
         if kind == 'delegation':
             assert decisions and all(home == str(b) for home, _ in decisions), decisions
         else:

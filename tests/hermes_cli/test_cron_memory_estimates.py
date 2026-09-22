@@ -24,6 +24,9 @@ def test_cli_migrates_only_selected_job_without_scheduling(tmp_path, monkeypatch
         assert after["next_run_at"] == before["next_run_at"]
         assert after["enabled"] is False
         assert "estimated_peak_memory_mb" not in get_job(untouched["id"])
+        scripts = tmp_path / "scripts"
+        scripts.mkdir(exist_ok=True)
+        (scripts / "new.py").write_text("print('fixture')\n")
         args = parser.parse_args(["cron", "create", "every 2h", "--script", "new.py",
                                   "--no-agent", "--paused", "--estimated-peak-memory-mb", "48"])
         assert cron_create(args) == 0

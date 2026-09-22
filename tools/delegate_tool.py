@@ -526,9 +526,6 @@ def delegate_task(
         task_images, err = _coerce_task_images(task_list, images)
     if err:
         return tool_error(err)
-    err = _oneshot_spawn_budget(parent_agent, len(task_list))
-    if err:
-        return tool_error(err)
     from agent.workload_estimates import validate_estimates, PEAK_FIELD, RETAINED_FIELD
     try:
         validate_estimates(estimated_peak_memory_mb, estimated_retained_memory_mb)
@@ -541,6 +538,9 @@ def delegate_task(
             validate_estimates(task.get(PEAK_FIELD), task.get(RETAINED_FIELD))
     except ValueError as exc:
         return tool_error(str(exc))
+    err = _oneshot_spawn_budget(parent_agent, len(task_list))
+    if err:
+        return tool_error(err)
 
     overall_start = time.monotonic()
     # Live transcripts: cache/delegation/live/<id>/task-<n>.log per task, a side channel with zero effect on message

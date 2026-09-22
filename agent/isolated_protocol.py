@@ -48,7 +48,7 @@ request_overrides reasoning_config capabilities prefill_messages fallback_model
 providers_allowed providers_ignored providers_order provider_sort
 provider_require_parameters provider_data_collection openrouter_min_coding_score
 acp_command acp_args session_cwd save_trajectories requested_provider
-load_soul_identity skip_background_review'''.split())
+load_soul_identity skip_background_review side_agent'''.split())
 
 
 def encode(value):
