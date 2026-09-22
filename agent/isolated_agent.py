@@ -14,12 +14,23 @@ from agent.isolated_protocol import AgentConstruction, DELEGATION_FIELDS, check_
 
 
 class IsolatedAgent:
-    def __init__(self, *, kind, launcher=None, **kwargs):
+    def __init__(self, *, kind, launcher=None, workload_estimate=None, **kwargs):
         self.kind = kind
+        from agent.workload_estimates import current_estimate
+        self._workload_estimate = dict(current_estimate(kind) if workload_estimate is None else workload_estimate)
         self._launcher = launcher
         self._approval_callback = kwargs.pop('approval_callback', None)
         self._channel = None
         self._context = contextvars.copy_context()
+        from agent.isolated_routing import capture_profile
+        self._profile_context = capture_profile()
+        # copy_context alone does not freeze the default home's env fallback.
+        # Pin provider/config selection and approval callbacks to the same home
+        # as the authenticated worker, including after ambient profile switches.
+        from hermes_constants import set_hermes_home_override
+        self._context.run(set_hermes_home_override, self._profile_context['home'])
+        from agent.workload_context import capture_commissioning
+        self._commissioning_context = capture_commissioning()
         from agent.isolated_approval import capture
         self._approval_policy = capture(kind)
         from agent.isolated_routing import capture as capture_routing
@@ -67,7 +78,8 @@ class IsolatedAgent:
             if options.get('conversation_history') is None:
                 options['conversation_history'] = self._history
             self._stream_callback = stream_callback
-            result = self._run_turn(user_message, task_id, stream_callback, **options)
+            result = self._context.copy().run(
+                self._run_turn, user_message, task_id, stream_callback, **options)
             with self._state_lock:
                 if self._interrupt_requested:
                     return self._cancelled_result()
@@ -111,13 +123,16 @@ class IsolatedAgent:
         listener.settimeout(30)
         token = self._generation
         args = [sys.executable, '-m', 'agent.isolated_worker', endpoint]
-        from agent.delegation_context import scrub_kanban_env
+        from agent.isolated_routing import profile_environment
         options = dict(stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                       cwd=str(Path(__file__).resolve().parents[1]), env=scrub_kanban_env(os.environ))
+                       cwd=str(Path(__file__).resolve().parents[1]), env=profile_environment(self._profile_context))
         try:
             if self._launcher is None:
                 from agent.workload_boundary import popen
-                process = popen(self.kind, args, cancel_event=self._cancel_event, **options)
+                from agent.workload_estimates import estimate_scope
+                from agent.workload_context import commissioning_scope
+                with estimate_scope({self.kind}, self._workload_estimate), commissioning_scope(self._commissioning_context):
+                    process = popen(self.kind, args, cancel_event=self._cancel_event, **options)
             else:
                 process = self._launcher(args, **options)
             with self._state_lock:
@@ -161,6 +176,8 @@ class IsolatedAgent:
                 self._channel = Channel(self._socket, token,
                     lambda op, payload: self._turn_event(token, op, payload))
             return self._channel.call('run', {'request': self.request.to_dict(),
+                'profile_context': self._profile_context,
+                'commissioning_context': self._commissioning_context,
                 'credential': self._runtime_key,
                 'approval_policy': self._approval_policy,
                 'routing_context': self._routing_context,

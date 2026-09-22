@@ -43,7 +43,7 @@ def queue_home(tmp_path, monkeypatch):
     spec = importlib.util.find_spec("hermes_worker_queue")
     if spec is None:
         pytest.skip("install the paired out-of-tree app in the isolated test venv")
-    from hermes_cli.plugins import PluginManager
+    from hermes_cli.plugins import get_plugin_manager
     from agent.workload_registry import snapshot_registration
     from hermes_worker_queue.client import Client
     from hermes_worker_queue.enforcement.linux import Systemd
@@ -72,7 +72,9 @@ def queue_home(tmp_path, monkeypatch):
             "  parent_lease:\n    ticket: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n"
             "    generation: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'\n"
         )
-        manager = PluginManager()
+        # AIAgent also discovers plugins: share its profile-keyed manager rather
+        # than registering the same provider through an independent manager.
+        manager = get_plugin_manager()
         manager.discover_and_load()
         provider = snapshot_registration("hermes-worker-queue")
         assert provider is not None

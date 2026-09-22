@@ -15,7 +15,8 @@ def workload_config():
     if not isinstance(config, dict):
         raise WorkloadUnavailable("invalid workload configuration")
     config = dict(config)
-    config.pop("parent_lease", None)
+    for key in ("parent_lease", "commissioning_context", "profile_id", "session_id"):
+        config.pop(key, None)
     from agent.workload_context import worker_lease
     lease = worker_lease()
     if lease is not None:
@@ -57,6 +58,8 @@ def execution_provider(kind):
 
 
 def popen(kind, args, *, cancel_event=None, **kwargs):
+    if set(kwargs) & {"commissioning_context", "profile_id", "session_id"}:
+        raise WorkloadUnavailable("ownership requires trusted commissioning context")
     if cancel_event is not None and cancel_event.is_set():
         raise WorkloadUnavailable("workload launch cancelled")
     config = workload_config()
@@ -69,8 +72,14 @@ def popen(kind, args, *, cancel_event=None, **kwargs):
         # Only an explicit parameter opts in: legacy **kwargs providers forward
         # straight to subprocess.Popen, which cannot accept a cancellation token.
         import inspect
-        if cancel_event is not None and "cancel_event" in inspect.signature(provider.popen).parameters:
+        parameters = inspect.signature(provider.popen).parameters
+        if cancel_event is not None and "cancel_event" in parameters:
             kwargs["cancel_event"] = cancel_event
+        ownership = parameters.get("commissioning_context")
+        if ownership is not None and ownership.kind in (
+                inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY):
+            from agent.workload_context import capture_commissioning
+            kwargs["commissioning_context"] = capture_commissioning()
         from agent.workload_estimates import current_estimate
         return provider.popen(kind, args, config=config, **current_estimate(kind), **kwargs)
     except Exception as exc:

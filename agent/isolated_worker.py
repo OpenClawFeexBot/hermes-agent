@@ -5,7 +5,7 @@ import sys
 from agent.isolated_protocol import AgentConstruction, check_peer, receive, send
 
 
-def construct(request, credential=None, *, lease=None, metadata=None, task_cwd=None, task_id=None, **callbacks):
+def construct(request, credential=None, *, lease=None, commissioning_context=None, metadata=None, task_cwd=None, task_id=None, **callbacks):
     if task_cwd is not None:
         from pathlib import Path
         from agent.runtime_cwd import set_session_cwd
@@ -25,7 +25,7 @@ def construct(request, credential=None, *, lease=None, metadata=None, task_cwd=N
     metadata = validate_metadata(metadata or {})
     if lease is not None:
         from agent.workload_context import install_worker_context
-        install_worker_context(lease)
+        install_worker_context(lease, commissioning_context)
 
     kwargs = dict(request.kwargs)
     kwargs.pop('session_cwd', None)  # Applied as runtime context, not an AIAgent argument.
@@ -71,8 +71,6 @@ def main(endpoint):
     check_peer(sock)
     send(sock, {'v': 1, 'op': 'hello', 'token': token})
     from agent.isolated_channel import Channel
-    from tools.terminal_tool import set_approval_callback
-    from agent.isolated_approval import install
     import threading
     import os
 
@@ -91,6 +89,10 @@ def main(endpoint):
         if op != 'run' or not running.acquire(blocking=False):
             raise ValueError('invalid or repeated agent run')
         try:
+            from agent.isolated_routing import install_profile
+            install_profile(payload['profile_context'])
+            from tools.terminal_tool import set_approval_callback
+            from agent.isolated_approval import install
             raw = payload['request']
             request = AgentConstruction(raw['kind'], raw['kwargs'])
             install('cron' if request.kind == 'cron-agent' else payload['approval_policy'])
@@ -99,6 +101,7 @@ def main(endpoint):
             set_approval_callback(lambda command, description, **options: channel.call(
                 'approval', {'command': command, 'description': description, 'options': options}, timeout=300))
             agent = construct(request, credential=payload.get('credential'),
+                commissioning_context=payload.get('commissioning_context'),
                 lease=payload.get('lease'), metadata=payload.get('metadata'),
                 task_cwd=payload['task_cwd'], task_id=payload.get('task_id'),
                 tool_progress_callback=lambda *args, **kwargs: channel.call('progress', {'args': args, 'kwargs': kwargs}),

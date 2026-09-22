@@ -17,6 +17,14 @@ class WorkloadProvider(ABC):
     Providers advertise supported kinds explicitly. ``popen`` owns admission,
     spawn, termination and completion; unsupported modes must fail closed.
     This API does not authorize serializing agents, callbacks or live clients.
+
+    A provider may explicitly accept ``commissioning_context`` on ``popen``.
+    Core supplies a captured effective-home ``profile_key`` and task-scoped
+    ``session_key`` (or None), not model kwargs/config labels. Isolated workers
+    inherit the root snapshot via authenticated bootstrap, independent of child
+    session creation. Legacy worker context remains None; **kwargs alone is not
+    opt-in. These are reporting keys, not authority: consumers must pseudonymize
+    them before persistence and independently verify execution/lease ownership.
     """
 
     api_version = WORKLOAD_API_VERSION

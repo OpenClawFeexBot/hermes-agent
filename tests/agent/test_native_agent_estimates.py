@@ -1,9 +1,8 @@
 """Actual delegation/cron construction carries estimates across worker threads."""
 import json
-from concurrent.futures import ThreadPoolExecutor
 
 from tests.agent.test_isolated_agent import local_model
-from tests.agent.test_isolated_queue_integration import queue_home
+from tests.agent.test_isolated_queue_integration import queue_home, wait_for
 
 
 def test_batch_delegation_keeps_individual_estimates(queue_home, local_model):
@@ -32,28 +31,48 @@ def test_batch_delegation_keeps_individual_estimates(queue_home, local_model):
         parent.close()
 
 
-def test_live_single_goal_dispatch_estimate_reaches_queue(queue_home, local_model):
+def test_live_single_goal_dispatch_estimate_reaches_queue(queue_home, local_model, caplog, monkeypatch):
     from run_agent import AIAgent
+    from tools import async_delegation as ad
+    from tools.process_registry import process_registry
+    from gateway.session_context import set_session_vars, clear_session_vars
+    from agent.workload_registry import snapshot_registration
 
+    ad._reset_for_tests()
     home, state, client, provider, backend = queue_home
     url, requests = local_model
     parent = AIAgent(model="fixture", provider="custom", base_url=url, api_key="fixture-key",
                      enabled_toolsets=[], skip_memory=True, skip_context_files=True,
                      quiet_mode=True)
+    monkeypatch.delenv('HERMES_SINGLE_QUERY_SESSION', raising=False)
+    tokens = set_session_vars(platform='api_server', session_key='estimate-owner',
+        session_id='estimate-owner', session_history_delivery='1', async_delivery=True)
     try:
         result = json.loads(parent._dispatch_delegate_task({
             "goal": "Return a short fixture response", "estimated_peak_memory_mb": 768,
             "estimated_retained_memory_mb": 400,
             "parent_lease": {"ticket": "forged", "generation": "forged"},
         }))
-        assert not result.get("error"), result
+        assert result.get('status') == 'dispatched', result
+        event = process_registry.completion_queue.get(timeout=40)
+        assert event['delegation_id'] == result['delegation_id'], event
+        assert len(event['results']) == 1, event
+        assert event['results'][0]['status'] == 'completed', event
+        assert event['results'][0]['tokens']['input'] > 0, event
+        assert snapshot_registration('hermes-worker-queue') is provider
+        assert 'incompatible or duplicate workload provider' not in caplog.text
+        # Completion publication and the coordinator's reap tick are independent.
+        wait_for(lambda: client.call('status')['reserved'] == 0)
         rows = [r for r in client.call("status")["jobs"] if r["kind"] == "delegation"]
         assert len(rows) == 1 and rows[0]["peak"] == 768 * 1024**2, rows
+        assert rows[0]['state'] == 'finished' and backend.empty(rows[0]['unit'])
         assert rows[0]["retained"] == 400 * 1024**2
         assert rows[0]["estimate_source"] == "job" and rows[0]["parent_ticket"] is None
         assert client.call("status")["reserved"] == 0
     finally:
         parent.close()
+        clear_session_vars(tokens)
+        ad._reset_for_tests()
 
 
 def test_cron_agent_estimate_survives_watchdog_thread(queue_home, local_model):
