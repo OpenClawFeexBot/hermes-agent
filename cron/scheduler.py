@@ -2455,13 +2455,13 @@ def run_job(
     ``extra_prompt``: optional per-run context from ``cronjob(action='run', prompt=...)`` (#57331). Appended
     to the stored prompt for this fire only — never persisted to the job definition.
     """
-    from agent.workload_boundary import require_unmanaged_allowed, execution_provider
+    from agent.workload_boundary import execution_provider
     from agent.workload_provider import WorkloadUnavailable
     try:
         if job.get("no_agent"):
             execution_provider("cron-script")
         else:
-            require_unmanaged_allowed("cron agent")
+            execution_provider("cron-agent")
     except WorkloadUnavailable as exc:
         return False, "", "", str(exc)
     job_id = job["id"]
@@ -2497,9 +2497,15 @@ def run_job(
         model = setup.model
 
         # Open state.db only after every early-return gate has passed.
-        _session_db = _open_cron_session_db(job)
+        factory = AIAgent
+        if execution_provider("cron-agent") is not None:
+            from functools import partial
+            from agent.isolated_agent import IsolatedAgent
+            factory = partial(IsolatedAgent, kind="cron-agent")
+        else:
+            _session_db = _open_cron_session_db(job)
         agent = _construct_cron_agent(
-            AIAgent, job, _cfg, setup, workdir=scope.workdir, session_id=_cron_session_id,
+            factory, job, _cfg, setup, workdir=scope.workdir, session_id=_cron_session_id,
             session_db=_session_db)
         _audit = _FireAudit(job, job_id, model)
 

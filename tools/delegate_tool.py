@@ -181,10 +181,14 @@ def _build_child_agent(
 ):
     """Build (don't run) a child AIAgent on the main thread. override_* (from delegation config) replace parent
     inheritance so children can run on a different provider:model pair."""
-    from agent.workload_boundary import require_unmanaged_allowed
-    require_unmanaged_allowed("child agent construction")
+    from agent.workload_boundary import execution_provider
+    managed = execution_provider("delegation")
     import uuid as _uuid
     from run_agent import AIAgent
+    if managed is not None:
+        from functools import partial
+        from agent.isolated_agent import IsolatedAgent
+        AIAgent = partial(IsolatedAgent, kind="delegation")
     from agent.delegation_context import delegated_child_context
     # Role is depth-derived: a child may delegate iff the kill switch is on and
     # depth budget remains below max_spawn_depth. The `role` arg is ignored.
@@ -232,7 +236,7 @@ def _build_child_agent(
     else:
         request_overrides = {} if override_provider else dict(getattr(parent_agent, "request_overrides", {}) or {})
     parent_sid = getattr(parent_agent, "session_id", None)
-    child_session_db = _open_child_session_db(parent_agent)
+    child_session_db = None if managed is not None else _open_child_session_db(parent_agent)
     with delegated_child_context():
         try:
             child = AIAgent(
@@ -278,7 +282,7 @@ def _build_child_agent(
     if parent_sid and getattr(child, "_session_init_model_config", None) is not None:
         child._session_init_model_config["_delegate_from"] = parent_sid
     # Shared pool lets children rotate credentials on rate limits.
-    child_pool = _resolve_child_credential_pool(
+    child_pool = None if managed is not None else _resolve_child_credential_pool(
         rt["provider"], parent_agent, rt["base_url"], effective_requested_provider=rt.get("requested_provider"),
     )
     if child_pool is not None:
@@ -459,10 +463,10 @@ def delegate_task(
     if normalized_action and normalized_action != "spawn":
         return tool_error(f"Unknown action '{action}'. Use spawn (default), list, steer, or stop.")
 
-    from agent.workload_boundary import require_unmanaged_allowed
+    from agent.workload_boundary import execution_provider
     from agent.workload_provider import WorkloadUnavailable
     try:
-        require_unmanaged_allowed("delegation")
+        execution_provider("delegation")
     except WorkloadUnavailable as exc:
         return tool_error(str(exc))
 
