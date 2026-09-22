@@ -60,12 +60,12 @@ def execution_provider(kind):
 def popen(kind, args, *, cancel_event=None, **kwargs):
     if set(kwargs) & {"commissioning_context", "profile_id", "session_id"}:
         raise WorkloadUnavailable("ownership requires trusted commissioning context")
-    if cancel_event is not None and cancel_event.is_set():
-        raise WorkloadUnavailable("workload launch cancelled")
     config = workload_config()
     provider = select_provider(config)
     if provider is None:
         return subprocess.Popen(args, **kwargs)
+    if cancel_event is not None and cancel_event.is_set():
+        raise WorkloadUnavailable("workload launch cancelled")
     if kind not in provider.supported_kinds:
         raise WorkloadUnavailable(f"unsupported workload execution: {kind}")
     try:

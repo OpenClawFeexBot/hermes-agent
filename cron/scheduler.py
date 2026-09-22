@@ -3723,6 +3723,11 @@ def _run_external_worker_payload(payload_path: Path, ack_path: Path) -> bool:
             old_external_execution = os.environ.get("_HERMES_CRON_EXTERNAL_WORKER")
             os.environ["_HERMES_CRON_EXTERNAL_WORKER"] = execution_id
             try:
+                # Script-only workers never construct AIAgent (which normally
+                # discovers plugins). Load the adopted profile's execution owner
+                # before crossing any required workload launch boundary.
+                from hermes_cli.plugins import get_plugin_manager
+                get_plugin_manager().discover_and_load()
                 return run_one_job(job, adapters=None, loop=None, verbose=False)
             finally:
                 if old_external_execution is None:

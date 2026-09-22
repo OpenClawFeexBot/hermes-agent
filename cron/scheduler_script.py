@@ -380,7 +380,8 @@ def _run_job_script(
         # parent (back-compat). NEVER mutate the Python process cwd — that would leak into concurrent
         # gateway sessions (#69396).
         proc = popen(
-            "cron-script", argv, **({"stdin": subprocess.DEVNULL} if managed else {}),
+            "cron-script", argv, cancel_event=cancel_event,
+            **({"stdin": subprocess.DEVNULL} if managed else {}),
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             cwd=workdir or str(path.parent), env=env, **popen_kwargs)
         deadline = time.monotonic() + script_timeout
