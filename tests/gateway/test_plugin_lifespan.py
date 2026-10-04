@@ -125,3 +125,151 @@ async def test_stop_during_resource_entry_waits_for_cleanup(monkeypatch):
     finally:
         start.cancel()
         await asyncio.gather(start, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_concurrent_stop_retains_ownership_until_reverse_cleanup(monkeypatch, cancel):
+    from gateway.plugin_lifespan import start_plugin_lifespans, stop_plugin_lifespans
+    from hermes_cli import plugins
+
+    closing, release = asyncio.Event(), asyncio.Event()
+    events = []
+
+    @asynccontextmanager
+    async def first(*, gateway):
+        try:
+            yield
+        finally:
+            events.append("first")
+
+    @asynccontextmanager
+    async def second(*, gateway):
+        try:
+            yield
+        finally:
+            closing.set()
+            await release.wait()
+            events.append("second")
+
+    manager = plugins.PluginManager()
+    manager._discovered = True
+    manager._hooks["gateway_lifespan"] = [first, second]
+    monkeypatch.setattr(plugins, "get_plugin_manager", lambda: manager)
+    runner = SimpleNamespace()
+    await start_plugin_lifespans(runner)
+    stop = asyncio.create_task(stop_plugin_lifespans(runner))
+    sibling = None
+    try:
+        await asyncio.wait_for(closing.wait(), 5)
+        if cancel:
+            stop.cancel()
+            await asyncio.sleep(0)
+            stop.cancel()
+        sibling = asyncio.create_task(stop_plugin_lifespans(runner))
+        done, _ = await asyncio.wait({sibling}, timeout=0.05)
+        assert not done, "second stop returned while required cleanup was still running"
+        with pytest.raises(RuntimeError, match="already started"):
+            await start_plugin_lifespans(runner)
+    finally:
+        release.set()
+        results = await asyncio.gather(stop, *([sibling] if sibling else []), return_exceptions=True)
+    assert events == ["second", "first"]
+    if cancel:
+        assert isinstance(results[0], asyncio.CancelledError)
+    await start_plugin_lifespans(runner)
+    await stop_plugin_lifespans(runner)
+
+
+@pytest.mark.asyncio
+async def test_failed_start_unwind_survives_repeated_cancellation(monkeypatch):
+    from gateway.plugin_lifespan import start_plugin_lifespans
+    from hermes_cli import plugins
+
+    closing, release, closed = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    @asynccontextmanager
+    async def acquired(*, gateway):
+        try:
+            yield
+        finally:
+            closing.set()
+            await release.wait()
+            closed.set()
+
+    @asynccontextmanager
+    async def failing(*, gateway):
+        raise ValueError("entry failed")
+        yield
+
+    manager = plugins.PluginManager()
+    manager._discovered = True
+    manager._hooks["gateway_lifespan"] = [acquired, failing]
+    monkeypatch.setattr(plugins, "get_plugin_manager", lambda: manager)
+    runner = SimpleNamespace()
+    start = asyncio.create_task(start_plugin_lifespans(runner))
+    try:
+        await asyncio.wait_for(closing.wait(), 5)
+        start.cancel()
+        await asyncio.sleep(0)
+        start.cancel()
+        done, _ = await asyncio.wait({start}, timeout=0.05)
+        assert not done, "startup cancellation abandoned resource unwind"
+    finally:
+        release.set()
+        await asyncio.gather(start, return_exceptions=True)
+    assert closed.is_set()
+
+
+def test_shutdown_watchdog_bounds_stuck_plugin_exit(tmp_path):
+    import os
+    import subprocess
+    import sys
+    import textwrap
+
+    code = textwrap.dedent('''
+        import asyncio
+        from contextlib import asynccontextmanager
+        from pathlib import Path
+        from types import SimpleNamespace
+        from gateway import run_shutdown
+        from gateway.run import GatewayRunner
+        from gateway.plugin_lifespan import start_plugin_lifespans
+        from hermes_cli import plugins
+
+        @asynccontextmanager
+        async def resource(*, gateway):
+            try:
+                yield
+            finally:
+                await asyncio.Event().wait()
+
+        manager = plugins.PluginManager()
+        manager._discovered = True
+        manager._hooks["gateway_lifespan"] = [resource]
+        plugins.get_plugin_manager = lambda: manager
+        async def phase(*args):
+            pass
+        for name in ("_stop_begin_teardown", "_stop_drain_active_work",
+                     "_stop_finalize_agents_and_adapters", "_stop_release_runtime_state"):
+            setattr(GatewayRunner, name, phase)
+        GatewayRunner._stop_quiesce_and_close_session_dbs = lambda *a: None
+        GatewayRunner._shutdown_watchdog_snapshot = lambda *a: {"phase": "plugin-exit"}
+        async def persist(*args):
+            Path("clean-exit").touch()
+        GatewayRunner._stop_persist_exit_state = persist
+        run_shutdown._effective_watchdog_leash = lambda *a: 0.2
+        async def main():
+            runner = SimpleNamespace(_restart_drain_timeout=1)
+            await start_plugin_lifespans(runner)
+            await run_shutdown.GatewayShutdownMixin._stop_impl(runner)
+        asyncio.run(main())
+    ''')
+    env = dict(os.environ, HERMES_HOME=str(tmp_path))
+    env.pop("PYTEST_CURRENT_TEST", None)
+    result = subprocess.run([sys.executable, "-c", code], cwd=tmp_path, env=env,
+                            capture_output=True, text=True, timeout=15)
+    assert result.returncode == 1, result.stderr
+    assert not (tmp_path / "clean-exit").exists()
+    dump = tmp_path / "logs" / "gateway-shutdown-watchdog.log"
+    assert "shutdown_watchdog_fired" in dump.read_text()

@@ -10,7 +10,15 @@ order before startup work or adapter connections, and exits them in reverse orde
 after active-work drain and before recording a clean exit. Entry failure prevents
 startup and unwinds resources already entered. Aborted startup also unwinds them.
 Stop during entry cancels and awaits the startup owner. A duplicate start is refused
-without closing the existing owner's resources.
+without closing the existing owner's resources. Concurrent stops await the same exit
+task; cancellation is re-raised only after exit finishes. The resource remains owned
+until then, including during failed-start unwind. The existing gateway shutdown
+watchdog bounds stuck exits at process level; it does not mark them clean.
+
+Resources are a launch-profile boot snapshot. Plugin reload/unload changes future
+registrations, not entered resources: those stay owned until gateway stop. Restart
+the gateway to apply resource settings or remove a running resource. Discovery in a
+secondary profile does not enter resources or create another owner.
 
 Factories run on the gateway loop and must not block it. Move blocking work to an
 owned context-propagating thread; await readiness before yielding. Handle partial
