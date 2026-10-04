@@ -10,6 +10,7 @@ async def start_plugin_lifespans(gateway):
     if (
         getattr(gateway, "_plugin_lifespan_stack", None) is not None
         or getattr(gateway, "_plugin_lifespan_start_task", None) is not None
+        or getattr(gateway, "_plugin_lifespan_stops", 0)
     ):
         raise RuntimeError("gateway plugin lifespans already started")
     manager = _ensure_plugins_discovered()
@@ -28,6 +29,16 @@ async def start_plugin_lifespans(gateway):
 
 
 async def stop_plugin_lifespans(gateway):
+    # Keep admission closed until every stop waiter has finished, including the
+    # scheduling gap after a cancelled startup task completes.
+    gateway._plugin_lifespan_stops = getattr(gateway, "_plugin_lifespan_stops", 0) + 1
+    try:
+        await _stop_plugin_lifespans(gateway)
+    finally:
+        gateway._plugin_lifespan_stops -= 1
+
+
+async def _stop_plugin_lifespans(gateway):
     starting = getattr(gateway, "_plugin_lifespan_start_task", None)
     if starting is not None and starting is not asyncio.current_task():
         starting.cancel()

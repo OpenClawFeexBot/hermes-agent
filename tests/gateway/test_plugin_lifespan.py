@@ -273,3 +273,44 @@ def test_shutdown_watchdog_bounds_stuck_plugin_exit(tmp_path):
     assert not (tmp_path / "clean-exit").exists()
     dump = tmp_path / "logs" / "gateway-shutdown-watchdog.log"
     assert "shutdown_watchdog_fired" in dump.read_text()
+
+@pytest.mark.asyncio
+async def test_stop_during_entry_refuses_callback_restart_until_stop_returns(monkeypatch):
+    from gateway.plugin_lifespan import start_plugin_lifespans, stop_plugin_lifespans
+    from hermes_cli import plugins
+
+    entered = asyncio.Event()
+    calls, closed = [], []
+
+    @asynccontextmanager
+    async def resource(*, gateway):
+        calls.append(len(calls) + 1)
+        number = calls[-1]
+        if number == 1:
+            entered.set()
+            await asyncio.Event().wait()
+        try:
+            yield
+        finally:
+            closed.append(number)
+
+    manager = plugins.PluginManager()
+    manager._discovered = True
+    manager._hooks["gateway_lifespan"] = [resource]
+    monkeypatch.setattr(plugins, "get_plugin_manager", lambda: manager)
+    runner = SimpleNamespace()
+    replacement = []
+    starting = asyncio.create_task(start_plugin_lifespans(runner))
+    starting.add_done_callback(lambda _: replacement.append(
+        asyncio.create_task(start_plugin_lifespans(runner))))
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        await stop_plugin_lifespans(runner)
+        results = await asyncio.gather(*replacement, return_exceptions=True)
+        assert len(results) == 1 and isinstance(results[0], RuntimeError), (
+            "replacement reported success while the old stop silently closed it", results, closed)
+        await start_plugin_lifespans(runner)
+        assert closed == []
+    finally:
+        await stop_plugin_lifespans(runner)
+    assert closed == [2]

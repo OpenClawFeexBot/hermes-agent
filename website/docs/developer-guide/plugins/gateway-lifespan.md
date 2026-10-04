@@ -11,8 +11,10 @@ after active-work drain and before recording a clean exit. Entry failure prevent
 startup and unwinds resources already entered. Aborted startup also unwinds them.
 Stop during entry cancels and awaits the startup owner. A duplicate start is refused
 without closing the existing owner's resources. Concurrent stops await the same exit
-task; cancellation is re-raised only after exit finishes. The resource remains owned
-until then, including during failed-start unwind. The existing gateway shutdown
+task; cancellation is re-raised only after exit finishes. New starts remain refused
+until all stop callers have finished, so a retiring stop cannot close a successor.
+The resource remains owned until then, including during failed-start unwind.
+The existing gateway shutdown
 watchdog bounds stuck exits at process level; it does not mark them clean.
 
 Resources are a launch-profile boot snapshot. Plugin reload/unload changes future
