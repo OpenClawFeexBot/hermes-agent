@@ -61,12 +61,28 @@ def encode(value):
 def _ready(sock, *, writing=False, deadline=None):
     import select
     import time
-    remaining = None if deadline is None else deadline - time.monotonic()
-    if remaining is not None and remaining <= 0:
-        raise TimeoutError('agent IPC transfer timed out')
-    readable, writable, _ = select.select([] if writing else [sock], [sock] if writing else [], [], remaining)
-    if not (readable or writable):
-        raise TimeoutError('agent IPC transfer timed out')
+    # A close in another thread need not wake select (and its captured fd may
+    # already have been reused). Recheck the socket between bounded waits, even
+    # for idle reads without a transfer deadline.
+    while True:
+        if sock.fileno() < 0:
+            raise EOFError('agent control connection closed')
+        remaining = None if deadline is None else deadline - time.monotonic()
+        if remaining is not None and remaining <= 0:
+            raise TimeoutError('agent IPC transfer timed out')
+        interval = 0.1 if remaining is None else min(remaining, 0.1)
+        try:
+            readable, writable, _ = select.select(
+                [] if writing else [sock], [sock] if writing else [], [], interval)
+        except ValueError:
+            # close can race the conversion from socket object to descriptor.
+            if sock.fileno() < 0:
+                raise EOFError('agent control connection closed') from None
+            raise
+        if sock.fileno() < 0:
+            raise EOFError('agent control connection closed')
+        if readable or writable:
+            return
 
 
 def send_payload(sock, payload, *, deadline=None):
