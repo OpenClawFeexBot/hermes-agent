@@ -2147,9 +2147,15 @@ class GatewayShutdownMixin:
             await GatewayRunner._stop_finalize_agents_and_adapters(self, ctx)
             await GatewayRunner._stop_release_runtime_state(self, ctx)
             GatewayRunner._stop_quiesce_and_close_session_dbs(self, timeout, ctx)
+            from gateway.plugin_lifespan import stop_plugin_lifespans
+            await stop_plugin_lifespans(self)
             await GatewayRunner._stop_persist_exit_state(self, ctx)
         finally:
-            _watchdog_done.set()
+            from gateway.plugin_lifespan import stop_plugin_lifespans
+            try:
+                await stop_plugin_lifespans(self)
+            finally:
+                _watchdog_done.set()
 
     async def stop(
         self, *, restart: bool = False, detached_restart: bool = False, service_restart: bool = False
